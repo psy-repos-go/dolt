@@ -22,6 +22,7 @@ import (
 
 	sqle "github.com/dolthub/go-mysql-server"
 	"github.com/dolthub/go-mysql-server/sql"
+	"github.com/dolthub/go-mysql-server/sql/indexbuilder"
 	"github.com/stretchr/testify/require"
 
 	"github.com/dolthub/dolt/go/libraries/doltcore/doltdb"
@@ -201,75 +202,81 @@ func (tbl *testMergeableIndexTable) PartitionRows(ctx *sql.Context, part sql.Par
 	return tbl.il.RowIter(ctx, part.(sqlutil.SinglePartition).RowData)
 }
 
-// Index made to test mergeable indexes by intercepting all calls that return lookups and returning modified lookups.
+// Index made to test mergeable indexes by intercepting all calls that return index builders and returning modified builders.
 type testMergeableDoltIndex struct {
 	*doltIndex
 	t           *testing.T
 	finalRanges func([]lookup.Range) // We return the final range set to compare to the expected ranges
 }
 
-func (di *testMergeableDoltIndex) Get(keys ...interface{}) (sql.IndexLookup, error) {
-	indexLookup, err := di.doltIndex.Get(keys...)
-	return &testMergeableIndexLookup{
-		doltIndexLookup: indexLookup.(*doltIndexLookup),
-		t:               di.t,
-		finalRanges:     di.finalRanges,
-	}, err
+var _ sql.Index = (*testMergeableDoltIndex)(nil)
+
+func (di *testMergeableDoltIndex) Equals(ctx *sql.Context, colExpr string, key interface{}) sql.Index {
+	dib := indexbuilder.NewBuilder(ctx, di.doltIndex).Equals(ctx, colExpr, key)
+	return &testMergeableDoltIndexBuilder{di, dib.(*indexbuilder.Builder)}
 }
-func (di *testMergeableDoltIndex) Not(keys ...interface{}) (sql.IndexLookup, error) {
-	indexLookup, err := di.doltIndex.Not(keys...)
-	return &testMergeableIndexLookup{
-		doltIndexLookup: indexLookup.(*doltIndexLookup),
-		t:               di.t,
-		finalRanges:     di.finalRanges,
-	}, err
+func (di *testMergeableDoltIndex) NotEquals(ctx *sql.Context, colExpr string, key interface{}) sql.Index {
+	dib := indexbuilder.NewBuilder(ctx, di.doltIndex).NotEquals(ctx, colExpr, key)
+	return &testMergeableDoltIndexBuilder{di, dib.(*indexbuilder.Builder)}
 }
-func (di *testMergeableDoltIndex) AscendGreaterOrEqual(keys ...interface{}) (sql.IndexLookup, error) {
-	indexLookup, err := di.doltIndex.AscendGreaterOrEqual(keys...)
-	return &testMergeableIndexLookup{
-		doltIndexLookup: indexLookup.(*doltIndexLookup),
-		t:               di.t,
-		finalRanges:     di.finalRanges,
-	}, err
+func (di *testMergeableDoltIndex) GreaterThan(ctx *sql.Context, colExpr string, key interface{}) sql.Index {
+	dib := indexbuilder.NewBuilder(ctx, di.doltIndex).GreaterThan(ctx, colExpr, key)
+	return &testMergeableDoltIndexBuilder{di, dib.(*indexbuilder.Builder)}
 }
-func (di *testMergeableDoltIndex) AscendLessThan(keys ...interface{}) (sql.IndexLookup, error) {
-	indexLookup, err := di.doltIndex.AscendLessThan(keys...)
-	return &testMergeableIndexLookup{
-		doltIndexLookup: indexLookup.(*doltIndexLookup),
-		t:               di.t,
-		finalRanges:     di.finalRanges,
-	}, err
+func (di *testMergeableDoltIndex) GreaterOrEqual(ctx *sql.Context, colExpr string, key interface{}) sql.Index {
+	dib := indexbuilder.NewBuilder(ctx, di.doltIndex).GreaterOrEqual(ctx, colExpr, key)
+	return &testMergeableDoltIndexBuilder{di, dib.(*indexbuilder.Builder)}
 }
-func (di *testMergeableDoltIndex) AscendRange(greaterOrEqual, lessThanOrEqual []interface{}) (sql.IndexLookup, error) {
-	indexLookup, err := di.doltIndex.AscendRange(greaterOrEqual, lessThanOrEqual)
-	return &testMergeableIndexLookup{
-		doltIndexLookup: indexLookup.(*doltIndexLookup),
-		t:               di.t,
-		finalRanges:     di.finalRanges,
-	}, err
+func (di *testMergeableDoltIndex) LessThan(ctx *sql.Context, colExpr string, key interface{}) sql.Index {
+	dib := indexbuilder.NewBuilder(ctx, di.doltIndex).LessThan(ctx, colExpr, key)
+	return &testMergeableDoltIndexBuilder{di, dib.(*indexbuilder.Builder)}
 }
-func (di *testMergeableDoltIndex) DescendGreater(keys ...interface{}) (sql.IndexLookup, error) {
-	indexLookup, err := di.doltIndex.DescendGreater(keys...)
-	return &testMergeableIndexLookup{
-		doltIndexLookup: indexLookup.(*doltIndexLookup),
-		t:               di.t,
-		finalRanges:     di.finalRanges,
-	}, err
+func (di *testMergeableDoltIndex) LessOrEqual(ctx *sql.Context, colExpr string, key interface{}) sql.Index {
+	dib := indexbuilder.NewBuilder(ctx, di.doltIndex).LessOrEqual(ctx, colExpr, key)
+	return &testMergeableDoltIndexBuilder{di, dib.(*indexbuilder.Builder)}
 }
-func (di *testMergeableDoltIndex) DescendLessOrEqual(keys ...interface{}) (sql.IndexLookup, error) {
-	indexLookup, err := di.doltIndex.DescendLessOrEqual(keys...)
-	return &testMergeableIndexLookup{
-		doltIndexLookup: indexLookup.(*doltIndexLookup),
-		t:               di.t,
-		finalRanges:     di.finalRanges,
-	}, err
+func (di *testMergeableDoltIndex) Build(ctx *sql.Context) (sql.IndexLookup, error) {
+	return nil, nil
 }
-func (di *testMergeableDoltIndex) DescendRange(lessOrEqual, greaterOrEqual []interface{}) (sql.IndexLookup, error) {
-	indexLookup, err := di.doltIndex.DescendRange(lessOrEqual, greaterOrEqual)
+
+// Index builder made to test mergeable indexes by intercepting the build call that returns lookups and returns a modified lookup.
+type testMergeableDoltIndexBuilder struct {
+	di *testMergeableDoltIndex
+	*indexbuilder.Builder
+}
+
+var _ sql.Index = (*testMergeableDoltIndex)(nil)
+
+func (dib *testMergeableDoltIndexBuilder) Equals(ctx *sql.Context, colExpr string, key interface{}) sql.Index {
+	_ = dib.Builder.Equals(ctx, colExpr, key)
+	return dib
+}
+func (dib *testMergeableDoltIndexBuilder) NotEquals(ctx *sql.Context, colExpr string, key interface{}) sql.Index {
+	_ = dib.Builder.NotEquals(ctx, colExpr, key)
+	return dib
+}
+func (dib *testMergeableDoltIndexBuilder) GreaterThan(ctx *sql.Context, colExpr string, key interface{}) sql.Index {
+	_ = dib.Builder.GreaterThan(ctx, colExpr, key)
+	return dib
+}
+func (dib *testMergeableDoltIndexBuilder) GreaterOrEqual(ctx *sql.Context, colExpr string, key interface{}) sql.Index {
+	_ = dib.Builder.GreaterOrEqual(ctx, colExpr, key)
+	return dib
+}
+func (dib *testMergeableDoltIndexBuilder) LessThan(ctx *sql.Context, colExpr string, key interface{}) sql.Index {
+	_ = dib.Builder.LessThan(ctx, colExpr, key)
+	return dib
+}
+func (dib *testMergeableDoltIndexBuilder) LessOrEqual(ctx *sql.Context, colExpr string, key interface{}) sql.Index {
+	_ = dib.Builder.LessOrEqual(ctx, colExpr, key)
+	return dib
+}
+func (dib *testMergeableDoltIndexBuilder) Build(ctx *sql.Context) (sql.IndexLookup, error) {
+	indexLookup, err := dib.Builder.Build(ctx)
 	return &testMergeableIndexLookup{
 		doltIndexLookup: indexLookup.(*doltIndexLookup),
-		t:               di.t,
-		finalRanges:     di.finalRanges,
+		t:               dib.di.t,
+		finalRanges:     dib.di.finalRanges,
 	}, err
 }
 

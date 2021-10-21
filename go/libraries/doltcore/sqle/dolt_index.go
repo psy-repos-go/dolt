@@ -1,4 +1,4 @@
-// Copyright 2020 Dolthub, Inc.
+// Copyright 2020-2021 Dolthub, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,8 +17,10 @@ package sqle
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/dolthub/go-mysql-server/sql"
+	"github.com/dolthub/go-mysql-server/sql/indexbuilder"
 
 	"github.com/dolthub/dolt/go/libraries/doltcore/doltdb"
 	"github.com/dolthub/dolt/go/libraries/doltcore/schema"
@@ -28,14 +30,12 @@ import (
 
 type DoltIndex interface {
 	sql.Index
-	sql.AscendIndex
-	sql.DescendIndex
-	sql.NegateIndex
+	indexbuilder.BuildableIndex
 	Schema() schema.Schema
 	IndexSchema() schema.Schema
 	TableData() types.Map
 	IndexRowData() types.Map
-	Equals(index DoltIndex) bool
+	EqualsDoltIndex(index DoltIndex) bool
 }
 
 type doltIndex struct {
@@ -53,100 +53,122 @@ type doltIndex struct {
 	generated    bool
 }
 
-//TODO: have queries using IS NULL make use of indexes
 var _ DoltIndex = (*doltIndex)(nil)
 
-// AscendGreaterOrEqual implements sql.AscendIndex
-func (di *doltIndex) AscendGreaterOrEqual(keys ...interface{}) (sql.IndexLookup, error) {
-	tpl, err := di.keysToTuple(keys)
-	if err != nil {
-		return nil, err
-	}
-	return &doltIndexLookup{
-		idx: di,
-		ranges: []lookup.Range{
-			lookup.GreaterOrEqualRange(tpl),
-		},
-	}, nil
+// Equals implements the interface sql.Index.
+func (di *doltIndex) Equals(ctx *sql.Context, colExpr string, key interface{}) sql.Index {
+	return indexbuilder.NewBuilder(ctx, di).Equals(ctx, colExpr, key)
 }
 
-// AscendLessThan implements sql.AscendIndex
-func (di *doltIndex) AscendLessThan(keys ...interface{}) (sql.IndexLookup, error) {
-	tpl, err := di.keysToTuple(keys)
-	if err != nil {
-		return nil, err
-	}
-	return &doltIndexLookup{
-		idx: di,
-		ranges: []lookup.Range{
-			lookup.LessThanRange(tpl),
-		},
-	}, nil
+// NotEquals implements the interface sql.Index.
+func (di *doltIndex) NotEquals(ctx *sql.Context, colExpr string, key interface{}) sql.Index {
+	return indexbuilder.NewBuilder(ctx, di).NotEquals(ctx, colExpr, key)
 }
 
-// AscendRange implements sql.AscendIndex
-// TODO: rename this from AscendRange to BetweenRange or something
-func (di *doltIndex) AscendRange(greaterOrEqual, lessThanOrEqual []interface{}) (sql.IndexLookup, error) {
-	greaterTpl, err := di.keysToTuple(greaterOrEqual)
-	if err != nil {
-		return nil, err
-	}
-	lessTpl, err := di.keysToTuple(lessThanOrEqual)
-	if err != nil {
-		return nil, err
-	}
-	r, err := lookup.ClosedRange(greaterTpl, lessTpl)
-	if err != nil {
-		return nil, err
-	}
-	return &doltIndexLookup{
-		idx: di,
-		ranges: []lookup.Range{
-			r,
-		},
-	}, nil
+// GreaterThan implements the interface sql.Index.
+func (di *doltIndex) GreaterThan(ctx *sql.Context, colExpr string, key interface{}) sql.Index {
+	return indexbuilder.NewBuilder(ctx, di).GreaterThan(ctx, colExpr, key)
 }
 
-// DescendGreater implements sql.DescendIndex
-func (di *doltIndex) DescendGreater(keys ...interface{}) (sql.IndexLookup, error) {
-	tpl, err := di.keysToTuple(keys)
-	if err != nil {
-		return nil, err
-	}
-	r, err := lookup.GreaterThanRange(tpl)
-	if err != nil {
-		return nil, err
-	}
-	return &doltIndexLookup{
-		idx: di,
-		ranges: []lookup.Range{
-			r,
-		},
-	}, nil
+// GreaterOrEqual implements the interface sql.Index.
+func (di *doltIndex) GreaterOrEqual(ctx *sql.Context, colExpr string, key interface{}) sql.Index {
+	return indexbuilder.NewBuilder(ctx, di).GreaterOrEqual(ctx, colExpr, key)
 }
 
-// DescendLessOrEqual implements sql.DescendIndex
-func (di *doltIndex) DescendLessOrEqual(keys ...interface{}) (sql.IndexLookup, error) {
-	tpl, err := di.keysToTuple(keys)
-	if err != nil {
-		return nil, err
-	}
-	r, err := lookup.LessOrEqualRange(tpl)
-	if err != nil {
-		return nil, err
-	}
-	return &doltIndexLookup{
-		idx: di,
-		ranges: []lookup.Range{
-			r,
-		},
-	}, nil
+// LessThan implements the interface sql.Index.
+func (di *doltIndex) LessThan(ctx *sql.Context, colExpr string, key interface{}) sql.Index {
+	return indexbuilder.NewBuilder(ctx, di).LessThan(ctx, colExpr, key)
 }
 
-// DescendRange implements sql.DescendIndex
-// TODO: fix go-mysql-server to remove this duplicate function
-func (di *doltIndex) DescendRange(lessOrEqual, greaterOrEqual []interface{}) (sql.IndexLookup, error) {
-	return di.AscendRange(greaterOrEqual, lessOrEqual)
+// LessOrEqual implements the interface sql.Index.
+func (di *doltIndex) LessOrEqual(ctx *sql.Context, colExpr string, key interface{}) sql.Index {
+	return indexbuilder.NewBuilder(ctx, di).LessOrEqual(ctx, colExpr, key)
+}
+
+// Build implements the interface sql.Index.
+func (di *doltIndex) Build(ctx *sql.Context) (sql.IndexLookup, error) {
+	return nil, nil
+}
+
+// ColumnExpressionTypes implements the interface indexbuilder.BuildableIndex.
+func (di *doltIndex) ColumnExpressionTypes(ctx *sql.Context) []indexbuilder.ColumnExpressionType {
+	cets := make([]indexbuilder.ColumnExpressionType, len(di.cols))
+	for i, col := range di.cols {
+		cets[i] = indexbuilder.ColumnExpressionType{
+			Expression: di.tableName + "." + col.Name,
+			Type:       col.TypeInfo.ToSqlType(),
+		}
+	}
+	return cets
+}
+
+// ProcessIndexBuilderRanges implements the interface indexbuilder.BuildableIndex.
+func (di *doltIndex) ProcessIndexBuilderRanges(ctx *sql.Context, ranges map[string][]indexbuilder.Range) (sql.IndexLookup, error) {
+	if len(ranges) == 0 {
+		return nil, nil
+	}
+	exprs := di.Expressions()
+	if len(ranges) > len(exprs) {
+		return nil, nil
+	}
+	idx := di
+	if len(ranges) < len(exprs) {
+		idx = idx.prefix(len(ranges))
+		exprs = idx.Expressions()
+	}
+
+	// TODO: support mixing range types and lengths, which will allow us to support indexing over mixed operators
+	// For now, grab a range set to have a baseline so that we may enforce parity with all other range sets
+	var rangeTypes []indexbuilder.RangeType
+	for _, builderRanges := range ranges {
+		rangeTypes = make([]indexbuilder.RangeType, len(builderRanges))
+		for i, builderRange := range builderRanges {
+			rangeTypes[i] = builderRange.Type()
+		}
+		break // Go doesn't let us grab the first or last element from a map, so just iterate over one element and break
+	}
+
+	lookupRanges := make([]lookup.Range, len(rangeTypes))
+	for i, rangeType := range rangeTypes {
+		var keys1 []interface{} // used if only one bound is set, or if both bounds are set represents the lowerbound
+		var keys2 []interface{} // used only when both bounds are set, thus will always represent the upperbound
+
+		for _, expr := range exprs {
+			builderRanges, ok := ranges[expr]
+			if !ok {
+				return nil, indexbuilder.ErrInvalidColExpr.New(expr, idx.id)
+			}
+			if len(rangeTypes) != len(builderRanges) {
+				return nil, nil //TODO: support indexes having different range counts
+			}
+			builderRange := builderRanges[i]
+			if builderRange.Type() != rangeType {
+				return nil, nil //TODO: support mixing range types
+			}
+
+			hasLower := builderRange.HasLowerBound()
+			hasUpper := builderRange.HasUpperBound()
+			if hasLower && hasUpper {
+				keys1 = append(keys1, indexbuilder.GetKey(builderRange.LowerBound))
+				keys2 = append(keys2, indexbuilder.GetKey(builderRange.UpperBound))
+			} else if hasLower && !hasUpper {
+				keys1 = append(keys1, indexbuilder.GetKey(builderRange.LowerBound))
+			} else if !hasLower && hasUpper {
+				keys1 = append(keys1, indexbuilder.GetKey(builderRange.UpperBound))
+			}
+		}
+
+		lookupRange, err := idx.builderRangeToLookupRange(ctx, rangeType, keys1, keys2)
+		if err != nil {
+			return nil, err
+		}
+		lookupRanges[i] = lookupRange
+	}
+
+	return &doltIndexLookup{
+		idx:    idx,
+		ranges: lookupRanges,
+	}, nil
 }
 
 // Database implement sql.Index
@@ -161,49 +183,6 @@ func (di *doltIndex) Expressions() []string {
 		strs[i] = di.tableName + "." + col.Name
 	}
 	return strs
-}
-
-// Get implements sql.Index
-func (di *doltIndex) Get(keys ...interface{}) (sql.IndexLookup, error) {
-	tpl, err := di.keysToTuple(keys)
-	if err != nil {
-		return nil, err
-	}
-	r, err := lookup.ClosedRange(tpl, tpl)
-	if err != nil {
-		return nil, err
-	}
-	return &doltIndexLookup{
-		idx: di,
-		ranges: []lookup.Range{
-			r,
-		},
-	}, nil
-}
-
-// Not implements sql.NegateIndex
-func (di *doltIndex) Not(keys ...interface{}) (sql.IndexLookup, error) {
-	tpl, err := di.keysToTuple(keys)
-	if err != nil {
-		return nil, err
-	}
-	r1 := lookup.LessThanRange(tpl)
-	r2, err := lookup.GreaterThanRange(tpl)
-	if err != nil {
-		return nil, err
-	}
-	return &doltIndexLookup{
-		idx: di,
-		ranges: []lookup.Range{
-			r1,
-			r2,
-		},
-	}, nil
-}
-
-// Has implements sql.Index
-func (*doltIndex) Has(partition sql.Partition, key ...interface{}) (bool, error) {
-	return false, errors.New("unimplemented")
 }
 
 // ID implements sql.Index
@@ -236,7 +215,7 @@ func (di *doltIndex) Schema() schema.Schema {
 	return di.tableSch
 }
 
-// Schema returns the dolt index schema.
+// IndexSchema returns the dolt index schema.
 func (di *doltIndex) IndexSchema() schema.Schema {
 	return di.indexSch
 }
@@ -254,6 +233,95 @@ func (di *doltIndex) TableData() types.Map {
 // IndexRowData returns the map of index row data.
 func (di *doltIndex) IndexRowData() types.Map {
 	return di.indexRowData
+}
+
+// builderRangeToLookupRange takes a range returned by an index builder and converts it to the appropriate lookup range used for noms traversal.
+func (di *doltIndex) builderRangeToLookupRange(ctx *sql.Context, rangeType indexbuilder.RangeType, keys1, keys2 []interface{}) (lookup.Range, error) {
+	switch rangeType {
+	case indexbuilder.RangeType_Empty:
+		return lookup.EmptyRange(), nil
+	case indexbuilder.RangeType_All:
+		return lookup.AllRange(), nil
+	case indexbuilder.RangeType_GreaterThan:
+		tpl, err := di.keysToTuple(keys1)
+		if err != nil {
+			return lookup.Range{}, err
+		}
+		return lookup.GreaterThanRange(tpl)
+	case indexbuilder.RangeType_GreaterOrEqual:
+		tpl, err := di.keysToTuple(keys1)
+		if err != nil {
+			return lookup.Range{}, err
+		}
+		return lookup.GreaterOrEqualRange(tpl), nil
+	case indexbuilder.RangeType_LessThan:
+		tpl, err := di.keysToTuple(keys1)
+		if err != nil {
+			return lookup.Range{}, err
+		}
+		return lookup.LessThanRange(tpl), nil
+	case indexbuilder.RangeType_LessOrEqual:
+		tpl, err := di.keysToTuple(keys1)
+		if err != nil {
+			return lookup.Range{}, err
+		}
+		return lookup.LessOrEqualRange(tpl)
+	case indexbuilder.RangeType_Closed:
+		lowerTpl, err := di.keysToTuple(keys1)
+		if err != nil {
+			return lookup.Range{}, err
+		}
+		upperTpl, err := di.keysToTuple(keys2)
+		if err != nil {
+			return lookup.Range{}, err
+		}
+		return lookup.ClosedRange(lowerTpl, upperTpl)
+	case indexbuilder.RangeType_Open:
+		lowerTpl, err := di.keysToTuple(keys1)
+		if err != nil {
+			return lookup.Range{}, err
+		}
+		upperTpl, err := di.keysToTuple(keys2)
+		if err != nil {
+			return lookup.Range{}, err
+		}
+		return lookup.OpenRange(lowerTpl, upperTpl)
+	case indexbuilder.RangeType_OpenClosed:
+		lowerTpl, err := di.keysToTuple(keys1)
+		if err != nil {
+			return lookup.Range{}, err
+		}
+		upperTpl, err := di.keysToTuple(keys2)
+		if err != nil {
+			return lookup.Range{}, err
+		}
+		return lookup.CustomRange(lowerTpl, upperTpl, lookup.Open, lookup.Closed)
+	case indexbuilder.RangeType_ClosedOpen:
+		lowerTpl, err := di.keysToTuple(keys1)
+		if err != nil {
+			return lookup.Range{}, err
+		}
+		upperTpl, err := di.keysToTuple(keys2)
+		if err != nil {
+			return lookup.Range{}, err
+		}
+		return lookup.CustomRange(lowerTpl, upperTpl, lookup.Closed, lookup.Open)
+	}
+	return lookup.Range{}, indexbuilder.ErrInvalidRangeType.New()
+}
+
+// prefix returns a copy of this index with only the first n columns. If n is >= the number of columns present, then
+// the exact index is returned without copying.
+func (di *doltIndex) prefix(n int) *doltIndex {
+	if n >= len(di.cols) {
+		return di
+	}
+	ndi := *di
+	ndi.cols = di.cols[:n]
+	ndi.id = fmt.Sprintf("%s_PREFIX_%d", di.id, n)
+	ndi.comment = fmt.Sprintf("prefix of %s multi-column index on %d column(s)", di.id, n)
+	ndi.generated = true
+	return &ndi
 }
 
 func (di *doltIndex) keysToTuple(keys []interface{}) (types.Tuple, error) {
@@ -274,7 +342,7 @@ func (di *doltIndex) keysToTuple(keys []interface{}) (types.Tuple, error) {
 	return types.NewTuple(nbf, vals...)
 }
 
-func (di *doltIndex) Equals(oIdx DoltIndex) bool {
+func (di *doltIndex) EqualsDoltIndex(oIdx DoltIndex) bool {
 	if !expressionsAreEquals(di.Expressions(), oIdx.Expressions()) {
 		return false
 	}
