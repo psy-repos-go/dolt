@@ -102,6 +102,9 @@ func (l *List) Put(key, val []byte) {
 	if key == nil {
 		panic("key must be non-nil")
 	}
+	if l.Full() {
+		panic("list has no capacity")
+	}
 
 	next := l.head
 	var prevNd skipNode
@@ -148,11 +151,34 @@ func (l *List) Put(key, val []byte) {
 	return
 }
 
-func (l *List) Iter(cb func(key, val []byte)) {
-	node := l.firstNode()
-	for node.id != nullID {
-		cb(node.key, node.val)
-		node = l.getNode(node.next[0])
+type ListIter struct {
+	curr skipNode
+	list *List
+}
+
+func (it ListIter) Count() int {
+	return it.list.Count()
+}
+
+func (it ListIter) Next() (key, val []byte) {
+	key, val = it.curr.key, it.curr.val
+	it.curr = it.list.getNode(it.curr.next[0])
+	return
+}
+
+func (l *List) Iter() ListIter {
+	return ListIter{
+		curr: l.firstNode(),
+		list: l,
+	}
+}
+
+func (l *List) IterAll(cb func(key, val []byte)) {
+	iter := l.Iter()
+	key, val := iter.Next()
+	for key != nil {
+		cb(key, val)
+		key, val = iter.Next()
 	}
 }
 
