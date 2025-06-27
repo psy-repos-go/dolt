@@ -36,6 +36,7 @@ var DoltProcedures = []sql.ExternalStoredProcedureDetails{
 	{Name: "dolt_update_column_tag", Schema: int64Schema("status"), Function: doltUpdateColumnTag, AdminOnly: true},
 	{Name: "dolt_purge_dropped_databases", Schema: int64Schema("status"), Function: doltPurgeDroppedDatabases, AdminOnly: true},
 	{Name: "dolt_rebase", Schema: doltRebaseProcedureSchema, Function: doltRebase},
+	{Name: "dolt_rm", Schema: int64Schema("status"), Function: doltRm},
 
 	{Name: "dolt_gc", Schema: int64Schema("status"), Function: doltGC, ReadOnly: true, AdminOnly: true},
 	{Name: "dolt_thread_dump", Schema: stringSchema("thread_dump"), Function: doltThreadDump, ReadOnly: true, AdminOnly: true},
@@ -46,6 +47,7 @@ var DoltProcedures = []sql.ExternalStoredProcedureDetails{
 	{Name: "dolt_remote", Schema: int64Schema("status"), Function: doltRemote, AdminOnly: true},
 	{Name: "dolt_reset", Schema: int64Schema("status"), Function: doltReset},
 	{Name: "dolt_revert", Schema: int64Schema("status"), Function: doltRevert},
+	{Name: "dolt_stash", Schema: int64Schema("status"), Function: doltStash},
 	{Name: "dolt_tag", Schema: int64Schema("status"), Function: doltTag},
 	{Name: "dolt_verify_constraints", Schema: int64Schema("violations"), Function: doltVerifyConstraints},
 

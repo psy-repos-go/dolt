@@ -105,6 +105,13 @@ func CreateMergeArgParser() *argparser.ArgParser {
 	return ap
 }
 
+func CreateStashArgParser() *argparser.ArgParser {
+	ap := argparser.NewArgParserWithMaxArgs("stash", 3)
+	ap.SupportsFlag(IncludeUntrackedFlag, "u", "Untracked tables are also stashed.")
+	ap.SupportsFlag(AllFlag, "a", "All tables are stashed, including untracked and ignored tables.")
+	return ap
+}
+
 func CreateRebaseArgParser() *argparser.ArgParser {
 	ap := argparser.NewArgParserWithMaxArgs("rebase", 1)
 	ap.TooManyArgsErrorFunc = func(receivedArgs []string) error {
@@ -319,6 +326,13 @@ func CreateCountCommitsArgParser() *argparser.ArgParser {
 func CreateReflogArgParser() *argparser.ArgParser {
 	ap := argparser.NewArgParserWithMaxArgs("reflog", 1)
 	ap.SupportsFlag(AllFlag, "", "Show all refs, including hidden refs, such as DoltHub workspace refs")
+	return ap
+}
+
+func CreateRmArgParser() *argparser.ArgParser {
+	ap := argparser.NewArgParserWithVariableArgs("rm")
+	ap.ArgListHelp = append(ap.ArgListHelp, [2]string{"table", "table(s) to remove from the list of tables staged to be committed."})
+	ap.SupportsFlag(CachedFlag, "", "Use this option to unstage and remove tables only from the index. Working tree tables, whether modified or not, will be left alone.") //TODO
 	return ap
 }
 

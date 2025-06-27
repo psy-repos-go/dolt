@@ -2633,6 +2633,56 @@ WHERE z IN (
 			},
 		},
 	},
+	{
+		Name: "dolt_history table non-unique pk columns ignored for max1row optimization",
+		SetUpScript: []string{
+			"CREATE TABLE t1 (id INT PRIMARY KEY, message TEXT);",
+			"INSERT INTO t1 (id, message) VALUES (1, 'test1');",
+			"INSERT INTO t1 (id, message) VALUES (2, 'irrelevant');",
+			"CALL DOLT_COMMIT('-A', '-m', 'test commit 1');",
+			"UPDATE t1 SET message='test2' WHERE id=1;",
+			"CALL DOLT_COMMIT('-a', '-m', 'test commit 2');",
+		},
+		Assertions: []queries.ScriptTestAssertion{
+			{
+				Query:    "SELECT id, message FROM dolt_history_t1 where id = 1 order by commit_date desc;",
+				Expected: []sql.Row{{1, "test2"}, {1, "test1"}},
+			},
+			{
+				Query:    "SELECT id, message FROM dolt_history_t1 where id = 2;",
+				Expected: []sql.Row{{2, "irrelevant"}, {2, "irrelevant"}},
+			},
+		},
+	},
+	{
+		Name: "dolt_commit_ancestors table with commit_hash filter ignored for max1row optimization",
+		SetUpScript: []string{
+			"CALL DOLT_CHECKOUT('-b', 'branch1');",
+			"CREATE TABLE t1 (id INT PRIMARY KEY, message TEXT);",
+			"INSERT INTO t1 (id, message) VALUES (1, 'test1');",
+			"CALL DOLT_COMMIT('-A', '-m', 'test commit 1');",
+
+			"CALL DOLT_CHECKOUT('-b', 'branch2');",
+			"UPDATE t1 SET message='test2' WHERE id=1;",
+			"CALL DOLT_COMMIT('-A', '-m', 'test commit 2');",
+
+			"CALL DOLT_CHECKOUT('branch1');",
+			"INSERT INTO t1 (id, message) VALUES (2, 'test3');",
+			"CALL DOLT_COMMIT('-A', '-m', 'test commit 3');",
+
+			"CALL DOLT_MERGE('--no-ff', 'branch2');",
+		},
+		Assertions: []queries.ScriptTestAssertion{
+			{
+				Query:    "SELECT parent_index FROM dolt_commit_ancestors WHERE commit_hash = (SELECT hashof('HEAD'));",
+				Expected: []sql.Row{{0}, {1}},
+			},
+			{
+				Query:    "SELECT dca.parent_index, (SELECT message FROM dolt_log WHERE commit_hash = dca.parent_hash) AS message FROM dolt_commit_ancestors dca WHERE dca.commit_hash = (SELECT hashof('HEAD')) ORDER BY dca.parent_index;",
+				Expected: []sql.Row{{0, "test commit 3"}, {1, "test commit 2"}},
+			},
+		},
+	},
 }
 
 // BrokenHistorySystemTableScriptTests contains tests that work for non-prepared, but don't work
@@ -3388,7 +3438,51 @@ var DoltCheckoutScripts = []queries.ScriptTest{
 			},
 			{
 				Query:          "call dolt_checkout('HEAD', 't3')",
-				ExpectedErrStr: "table t3 does not exist in HEAD",
+				ExpectedErrStr: "tablespec 't3' did not match any table(s) known to dolt",
+			},
+		},
+	},
+	{
+		Name: "dolt_checkout with tracking branch and table with same name",
+		SetUpScript: []string{
+			"call dolt_remote('add','origin','file://../remote-repo-483');",
+			"create table feature (id int primary key, value int);",
+			"insert into feature values (1, 100);",
+			"call dolt_add('.');",
+			"call dolt_commit('-m', 'Add feature table');",
+			"call dolt_checkout('-b', 'feature');",
+			"insert into feature values (2, 200);",
+			"call dolt_add('.');",
+			"call dolt_commit('-m', 'Add row to feature table');",
+			"call dolt_push('origin', 'feature');",
+			"call dolt_checkout('main');",
+			"update feature set value = 101 where id = 1;",
+			"call dolt_branch('-D', 'feature');", // remove local branch to force remote tracking branch ambiguity
+		},
+		Assertions: []queries.ScriptTestAssertion{
+			{
+				Query:    "call dolt_checkout('--', 'feature');",
+				Expected: []sql.Row{{0, ""}},
+			},
+			{
+				Query:    "select * from feature order by id;",
+				Expected: []sql.Row{{1, 100}},
+			},
+			{
+				Query:          "call dolt_checkout('feature')",
+				ExpectedErrStr: "'feature' could be both a local table and a tracking branch.\nPlease use -- to disambiguate.",
+			},
+			{
+				Query:    "call dolt_checkout('feature', '--');",
+				Expected: []sql.Row{{0, "Switched to branch 'feature'\nbranch 'feature' set up to track 'origin/feature'."}},
+			},
+			{
+				Query:    "select active_branch();",
+				Expected: []sql.Row{{"feature"}},
+			},
+			{
+				Query:    "select * from feature order by id;",
+				Expected: []sql.Row{{1, 100}, {2, 200}},
 			},
 		},
 	},
@@ -7145,6 +7239,44 @@ var DoltCommitTests = []queries.ScriptTest{
 		},
 	},
 	{
+		Name: "CALL DOLT_COMMIT('--amend') works on initial commit",
+		SetUpScript: []string{
+			"SET @hash = (SELECT commit_hash FROM dolt_log ORDER BY commit_order ASC LIMIT 1);",
+			"CALL DOLT_BRANCH('initcommit', @hash);",
+			"CALL DOLT_CHECKOUT('initcommit');",
+		},
+		Assertions: []queries.ScriptTestAssertion{
+			{
+				Query:    "SELECT COUNT(*) FROM dolt_log;",
+				Expected: []sql.Row{{1}},
+			},
+			{
+				Query:    "CALL DOLT_COMMIT('--amend', '-m', 'amended commit message');",
+				Expected: []sql.Row{{doltCommit}},
+			},
+			{
+				Query:    "SELECT message FROM dolt_log;",
+				Expected: []sql.Row{{"amended commit message"}},
+			},
+			{
+				Query:    "SELECT COUNT(*) FROM dolt_log;",
+				Expected: []sql.Row{{1}},
+			},
+			{ // checking double-modification
+				Query:    "CALL DOLT_COMMIT('--amend', '-m', 'amended commit message x2');",
+				Expected: []sql.Row{{doltCommit}},
+			},
+			{
+				Query:    "SELECT message FROM dolt_log;",
+				Expected: []sql.Row{{"amended commit message x2"}},
+			},
+			{
+				Query:    "SELECT COUNT(*) FROM dolt_log;",
+				Expected: []sql.Row{{1}},
+			},
+		},
+	},
+	{
 		Name: "CALL DOLT_COMMIT('-amend') works to add changes to a commit",
 		SetUpScript: []string{
 			"SET @@AUTOCOMMIT=0;",
@@ -7165,7 +7297,7 @@ var DoltCommitTests = []queries.ScriptTest{
 				Expected: []sql.Row{{0}},
 			},
 			{
-				Query: "SELECT  message FROM dolt_log;",
+				Query: "SELECT message FROM dolt_log;",
 				Expected: []sql.Row{
 					{"original commit message for adding changes to a commit"},
 					{"amended commit message"},
@@ -7951,6 +8083,7 @@ var DoltSystemVariables = []queries.ScriptTest{
 					{"dolt_log"},
 					{"dolt_remote_branches"},
 					{"dolt_remotes"},
+					{"dolt_stashes"},
 					{"dolt_status"},
 					{"dolt_workspace_test"},
 					{"test"},

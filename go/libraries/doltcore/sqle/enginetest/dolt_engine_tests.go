@@ -988,6 +988,28 @@ func RunDoltMergeArtifacts(t *testing.T, h DoltEnginetestHarness) {
 	}
 }
 
+func RunDoltPreviewMergeConflictsTests(t *testing.T, h DoltEnginetestHarness) {
+	for _, script := range PreviewMergeConflictsFunctionScripts {
+		// harness can't reset effectively. Use a new harness for each script
+		func() {
+			h := h.NewHarness(t)
+			defer h.Close()
+			enginetest.TestScript(t, h, script)
+		}()
+	}
+}
+
+func RunDoltPreviewMergeConflictsPreparedTests(t *testing.T, h DoltEnginetestHarness) {
+	for _, script := range PreviewMergeConflictsFunctionScripts {
+		// harness can't reset effectively. Use a new harness for each script
+		func() {
+			h := h.NewHarness(t)
+			defer h.Close()
+			enginetest.TestScript(t, h, script)
+		}()
+	}
+}
+
 func RunDoltResetTest(t *testing.T, h DoltEnginetestHarness) {
 	for _, script := range DoltResetTestScripts {
 		// dolt versioning conflicts with reset harness -- use new harness every time
@@ -1004,6 +1026,9 @@ func RunDoltCheckoutTests(t *testing.T, h DoltEnginetestHarness) {
 		func() {
 			h := h.NewHarness(t)
 			defer h.Close()
+			if script.Name == "dolt_checkout with tracking branch and table with same name" {
+				h.UseLocalFileSystem()
+			}
 			enginetest.TestScript(t, h, script)
 		}()
 	}
@@ -1025,12 +1050,18 @@ func RunDoltCheckoutPreparedTests(t *testing.T, h DoltEnginetestHarness) {
 		func() {
 			h := h.NewHarness(t)
 			defer h.Close()
+			if script.Name == "dolt_checkout with tracking branch and table with same name" {
+				h.UseLocalFileSystem()
+			}
 			enginetest.TestScript(t, h, script)
 		}()
 	}
 
 	h = h.NewHarness(t)
-	defer h.Close()
+	defer func() {
+		time.Sleep(200 * time.Millisecond) // Give time for OS/process to release lock
+		h.Close()
+	}()
 	engine, err := h.NewEngine(t)
 	require.NoError(t, err)
 	readOnlyEngine, err := h.NewReadOnlyEngine(engine.EngineAnalyzer().Catalog.DbProvider)
@@ -1990,5 +2021,36 @@ func RunDoltHelpSystemTableTests(t *testing.T, harness DoltEnginetestHarness) {
 			defer harness.Close()
 			enginetest.TestScript(t, harness, script)
 		})
+	}
+}
+
+func RunDoltStashSystemTableTests(t *testing.T, h DoltEnginetestHarness) {
+	for _, script := range DoltStashTests {
+		func() {
+			h := h.NewHarness(t)
+			defer h.Close()
+			enginetest.TestScript(t, h, script)
+		}()
+	}
+}
+
+func RunDoltRmTests(t *testing.T, h DoltEnginetestHarness) {
+	for _, script := range DoltRmTests {
+		func() {
+			h := h.NewHarness(t)
+			defer h.Close()
+			enginetest.TestScript(t, h, script)
+		}()
+	}
+
+	h = h.NewHarness(t)
+	defer h.Close()
+	engine, err := h.NewEngine(t)
+	require.NoError(t, err)
+	readOnlyEngine, err := h.NewReadOnlyEngine(engine.EngineAnalyzer().Catalog.DbProvider)
+	require.NoError(t, err)
+
+	for _, script := range DoltRmReadOnlyTests {
+		enginetest.TestScriptWithEngine(t, readOnlyEngine, h, script)
 	}
 }
